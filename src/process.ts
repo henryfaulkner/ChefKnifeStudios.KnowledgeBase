@@ -13,7 +13,7 @@ async function getEmbedding(text: string): Promise<number[]> {
     return json.embedding;
 }
 
-interface RulesRecord {
+interface KBRecord {
     [key: string]: unknown;
     id: number;
     text: string;
@@ -28,17 +28,19 @@ interface Chunk {
     source: string;
 }
 
-const RULES_DIR = "bin/dnd-5e-rules";
-const LMOP_DIR = "bin/lost-mines-of-phandelver";
-
-function getRulesFilePaths(): string[] {
-    const glob = new Glob("**/*");
-    return Array.from(glob.scanSync(RULES_DIR)).map(f => `${RULES_DIR}/${f}`);
+interface DataSource {
+    dir: string;
+    tableName: string;
 }
 
-function getLmopFilePaths(): string[] {
+const DATA_SOURCES: DataSource[] = [
+    { dir: "bin/dnd-5e-rules", tableName: "dnd_5e_rules" },
+    { dir: "bin/lost-mines-of-phandelver", tableName: "lost_mines_of_phandelver" },
+];
+
+function getFilePaths(dir: string): string[] {
     const glob = new Glob("**/*");
-    return Array.from(glob.scanSync(LMOP_DIR)).map(f => `${LMOP_DIR}/${f}`);
+    return Array.from(glob.scanSync(dir)).map(f => `${dir}/${f}`);
 }
 
 function chunkMarkdownByHeaders(content: string, filePath: string): Chunk[] {
@@ -70,25 +72,15 @@ function chunkMarkdownByHeaders(content: string, filePath: string): Chunk[] {
     return chunks;
 }
 
-async function processRulesTable(records: RulesRecord[]): Promise<void> {
-    const db = await lancedb.connect("./.kb_data");
-    const tableName = "dnd_5e_rules";
-    await db.openTable(tableName).catch(async () => {
-        return await db.createTable(tableName, records);
-    });
-}
+async function processDataSource(db: lancedb.Connection, source: DataSource): Promise<void> {
+    const filePaths = getFilePaths(source.dir);
+    if (filePaths.length === 0) {
+        console.log(`Skipping "${source.tableName}" — no files found in ${source.dir}`);
+        return;
+    }
 
-async function processLmopTable(records: RulesRecord[]): Promise<void> {
-    const db = await lancedb.connect("./.kb_data");
-    const tableName = "lost_mines_of_phandelver";
-    await db.openTable(tableName).catch(async () => {
-        return await db.createTable(tableName, records);
-    });
-}
-
-async function processRules(): Promise<void> {
-    const filePaths = getRulesFilePaths();
-    console.log(`Found ${filePaths.length} files in ${RULES_DIR}`);
+    console.log(`\n=== ${source.tableName} ===`);
+    console.log(`Found ${filePaths.length} files in ${source.dir}`);
 
     // Read and chunk all files
     const allChunks: Chunk[] = [];
@@ -109,13 +101,13 @@ async function processRules(): Promise<void> {
     console.log(`${allChunks.length} total chunks, ${uniqueChunks.length} unique after dedup`);
 
     // Embed each chunk with progress and error handling
-    const records: RulesRecord[] = [];
+    const records: KBRecord[] = [];
     let failures = 0;
 
     for (let i = 0; i < uniqueChunks.length; i++) {
         const chunk = uniqueChunks[i];
         if (!chunk) {
-            console.log(`Chunck ${i + 1} was null and was not processed`);
+            console.log(`Chunk ${i + 1} was null and was not processed`);
             continue;
         }
 
@@ -136,19 +128,24 @@ async function processRules(): Promise<void> {
         }
     }
 
-    console.log(`\n--- Summary ---`);
+    console.log(`\n--- ${source.tableName} Summary ---`);
     console.log(`Files: ${filePaths.length}`);
     console.log(`Chunks: ${allChunks.length} total, ${uniqueChunks.length} unique`);
     console.log(`Embedded: ${records.length} success, ${failures} failures`);
 
-    await processRulesTable(records);
-    console.log(`Stored ${records.length} records in LanceDB`);
-}
-
-async function executeProcess(): Promise<void> {
-    await processRules();
+    if (records.length > 0) {
+        await db.openTable(source.tableName).catch(async () => {
+            return await db.createTable(source.tableName, records);
+        });
+        console.log(`Stored ${records.length} records in table "${source.tableName}"`);
+    }
 }
 
 const db = await lancedb.connect("./.kb_data");
 await db.dropAllTables();
-await executeProcess();
+
+for (const source of DATA_SOURCES) {
+    await processDataSource(db, source);
+}
+
+console.log("\nDone!");
