@@ -1,0 +1,9 @@
+{
+    "id": "dnd-knowledge-base",
+    "name": "D&D Knowledge Base",
+    "version": "0.1.0",
+    "minAppVersion": "1.0.0",
+    "description": "Query your local D&D 5e knowledge base powered by LanceDB and Ollama.",
+    "author": "Chef Knife Studios",
+    "isDesktopOnly": true
+}
