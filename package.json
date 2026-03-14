@@ -3,12 +3,6 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
-  "scripts": {
-    "dev:server": "bun run --watch src/server.ts",
-    "start:server": "bun run src/server.ts",
-    "query": "bun run src/prompt.ts",
-    "process": "bun run src/process.ts"
-  },
   "devDependencies": {
     "@types/bun": "latest"
   },

@@ -1,8 +1,17 @@
 import * as lancedb from "@lancedb/lancedb";
 import { Glob } from "bun";
 import path from "path";
-import { getEmbedding } from "./embedding";
-import { KB_DATA_PATH } from "./config";
+
+const OLLAMA_URL = "http://localhost:11434/api";
+
+async function getEmbedding(text: string): Promise<number[]> {
+    const res = await fetch(`${OLLAMA_URL}/embeddings`, {
+        method: "POST",
+        body: JSON.stringify({ model: "nomic-embed-text", prompt: text }),
+    });
+    const json: any = await res.json();
+    return json.embedding;
+}
 
 interface KBRecord {
     [key: string]: unknown;
@@ -34,43 +43,6 @@ function getFilePaths(dir: string): string[] {
     return Array.from(glob.scanSync(dir)).map(f => `${dir}/${f}`);
 }
 
-const MAX_CHUNK_CHARS = 6000; // ~1500 tokens, well within nomic-embed-text's 8192 limit
-
-function splitOversizedChunk(chunk: Chunk): Chunk[] {
-    if (chunk.text.length <= MAX_CHUNK_CHARS) return [chunk];
-
-    const lines = chunk.text.split("\n");
-    const subChunks: Chunk[] = [];
-    let current: string[] = [];
-    let currentLen = 0;
-    let partNum = 1;
-
-    for (const line of lines) {
-        if (currentLen + line.length > MAX_CHUNK_CHARS && current.length > 0) {
-            subChunks.push({
-                section: `${chunk.section} (part ${partNum})`,
-                text: current.join("\n"),
-                source: chunk.source,
-            });
-            partNum++;
-            current = [];
-            currentLen = 0;
-        }
-        current.push(line);
-        currentLen += line.length + 1;
-    }
-
-    if (current.length > 0) {
-        subChunks.push({
-            section: partNum > 1 ? `${chunk.section} (part ${partNum})` : chunk.section,
-            text: current.join("\n"),
-            source: chunk.source,
-        });
-    }
-
-    return subChunks;
-}
-
 function chunkMarkdownByHeaders(content: string, filePath: string): Chunk[] {
     const chunks: Chunk[] = [];
     const sections = content.split(/^(?=## )/m);
@@ -97,8 +69,7 @@ function chunkMarkdownByHeaders(content: string, filePath: string): Chunk[] {
         });
     }
 
-    // Split any chunks that exceed the embedding model's context limit
-    return chunks.flatMap(splitOversizedChunk);
+    return chunks;
 }
 
 async function processDataSource(db: lancedb.Connection, source: DataSource): Promise<void> {
@@ -170,7 +141,7 @@ async function processDataSource(db: lancedb.Connection, source: DataSource): Pr
     }
 }
 
-const db = await lancedb.connect(KB_DATA_PATH);
+const db = await lancedb.connect("./.kb_data");
 await db.dropAllTables();
 
 for (const source of DATA_SOURCES) {
